@@ -1,96 +1,361 @@
-# voraus-AD Dataset
 
-This is the official repository to the paper [**"The voraus-AD Dataset for Anomaly Detection in Robot Applications"**](https://arxiv.org/pdf/2311.04765.pdf) by Jan Thieß Brockmann, Marco Rudolph, Bodo Rosenhahn, and Bastian Wandt which is accepted to IEEE Transactions on Robotics and will be officially published soon.
+You are an expert machine-learning code generator and research engineer.
+Now you will implement an entire benchmark project for:
 
-We introduce the **voraus-AD dataset**, a novel dataset for **anomaly detection** in robotic applications as well as an unsupervised method **MVT-Flow** which finds anomalies on **time series of robotic machine data** without having some of them in the training set.
+**“Variable-Cardinality, Missing-Feature Robust Models for Robot Sensor Time-Series Anomaly Detection”**
 
-[**Download the Dataset 100 Hz** ](https://media.vorausrobotik.com/voraus-ad-dataset-100hz.parquet)    
-(~1,1 GB Disk / ~2.5 GB RAM) - used in this repository
+The goal is to automatically generate a complete multi-method codebase with
+**8 separate model implementations**, each following the original papers,
+with full training loops, evaluation, GPU support, progress bars,
+and ability to run inference after each epoch.
 
-[**Download the Dataset 500 Hz**](https://media.vorausrobotik.com/voraus-ad-dataset-500hz.parquet)    
-(~5.3 GB Disk / ~12.5 GB RAM)
+---
 
-**Please note:** The datasets in both the 100 Hz and 500 Hz variants are licensed under the [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License](https://creativecommons.org/licenses/by-nc-sa/4.0/) (CC BY-NC-SA 4.0).
+# 🧱 **GLOBAL PROJECT REQUIREMENTS (APPLY THIS TO ALL FILES AND METHODS)**
 
-## Getting Started
+### **1. Data & Task**
 
-You will need [Python 3.9](https://www.python.org/downloads/) and the packages specified in requirements.txt. We recommend setting up a [virtual environment with pip](https://packaging.python.org/guides/installing-using-pip-and-virtual-environments/) and installing the packages there.
+* Each sample is a full pick-and-place cycle from an industrial robot.
+* Input shape: `[T, S]`, where
 
-Install packages with:
+  * `T ≈ 1000–2000` time steps
+  * `S = 130` sensor channels
+* Feature-level missing sensors exist: some channels are zero for entire sample.
+* Missing is **not imputed**—we use a mask.
+* Training = **normal-only one-class anomaly detection**.
+* Evaluation = normal + 12 mechanical anomaly classes.
+* After every epoch: run inference on test set (ROC-AUC + PR-AUC).
 
-```shell
-python3.9 -m venv venv
-source venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
+### **2. Data interface (shared across all models)**
+
+Create `data/dataset.py` that yields:
+
+```
+{
+  "x": tensor [T, S],
+  "mask": tensor [T, S],   # 1 for observed, 0 for missing
+  "label": int (0 or 1),   # used only in eval
+}
 ```
 
-## Configure and Run
+### **3. Folder structure**
 
-Set the variable `DATASET_PATH` in [train.py](train.py) to the path of the downloaded dataset file.
-The variable `configuration` contains the training configuration as well as the hyperparameters of the model. The paper describes all the configuration parameters in detail. Make also sure to execute the tests before training. The test `test_train` may take a few minutes depending on your setup.
+Generate this entire folder structure with placeholder files as needed:
 
-```shell
-pytest
+```
+project_root/
+  data/
+    dataset.py
+
+  common/
+    config.py
+    train_loop.py
+    eval.py
+    utils.py
+
+  methods/
+    set_transformer/
+      model.py
+      train.py
+      config_set_transformer.py
+
+    naim/
+      model.py
+      train.py
+      config_naim.py
+
+    deepsets/
+      model.py
+      train.py
+      config_deepsets.py
+
+    ft_transformer/
+      model.py
+      train.py
+      config_ft_transformer.py
+
+    neumiss/
+      model.py
+      train.py
+      config_neumiss.py
+
+    dropout_baseline/
+      model.py
+      train.py
+      config_dropout.py
+
+    mlp_impute/
+      model.py
+      imputation.py
+      train.py
+      config_mlp_impute.py
+
+    tabpfn/
+      run_tabpfn.py
 ```
 
-The [train.py](train.py) is entrypoint to this repository, it contains the configuration, training and validation steps for our model. The default configuration will run a training with **paper-given parameters** on the provided voraus-AD dataset (@100 Hz).
-To start the training, just run [train.py](train.py)! 
+### **4. Training loop**
 
-```shell
-python train.py
+Implement `common/train_loop.py` with:
+
+* PyTorch
+* GPU support
+* **no `torch.compile`**
+* tqdm progress bars
+* mixed precision optional
+* after each epoch:
+
+  * run evaluation loop
+  * compute ROC-AUC + PR-AUC via sklearn
+  * save checkpoint
+* `Method` interface:
+
+```
+class Method(nn.Module):
+    def forward(self, x, mask) -> scores
+    def training_step(self, batch) -> loss
+    def eval_step(self, batch) -> (scores, labels)
 ```
 
-If training on the voraus-AD data does not lead to an AUROC greater 0.9, something seems to be wrong. Don't be worried if the loss is negative. The loss reflects the negative log likelihood which may be negative.
-Please report us if you have issues when using the code.
+### **5. Evaluation**
 
+`common/eval.py` must provide:
 
-## Devlopment
+* compute anomaly scores
+* ROC-AUC, PR-AUC
+* a simple function:
 
-We are using the following tools during development:
-
-- [isort](https://github.com/pycqa/isort/) for import sorting
-- [black](https://github.com/psf/black) for code formatting
-- [mypy](https://github.com/python/mypy) for static typing
-- [pylint](https://github.com/pylint-dev/pylint) for static code analysis (linting)
-- [pydocstyle](https://github.com/PyCQA/pydocstyle) for Docstring style checking 
-- [pytest](https://github.com/pytest-dev/pytest/) for (unit) testing
-- [tox](https://github.com/tox-dev/tox) for test automation
-
-Before commiting make sure to format your code with:
-
-```shell
-isort .
-black .
+```
+evaluate(model, dataloader) -> {"auc":..., "pr":...}
 ```
 
-And execute all checks using the following command:
+### **6. Hyperparameters**
 
-```shell
-tox
+* All hyperparameters in `config_xxx.py` (dataclasses).
+* Use the paper-recommended defaults.
+
+---
+
+# 📚 **NOW IMPLEMENT ALL 8 METHODS**
+
+Each method must **faithfully follow the referenced paper**.
+Each must consume `(x, mask)` and output anomaly scores.
+
+---
+
+# 1️⃣ **SET TRANSFORMER**
+
+(Paper: Lee et al., ICML 2019)
+
+### Requirements:
+
+* Per-sensor encoder φ:
+
+  * shared temporal encoder
+  * 1D TCN over time input `[T,2]` (value + mask)
+  * outputs `z_s ∈ R^{d_phi}`
+* Add sensor-ID embedding
+* Build set `Z = { z_s | mask[:,s].sum()>0 }`
+* L layers of SAB (Set Attention Block)
+* One PMA seed → global embedding
+* Deep SVDD head: distance to learned center
+
+Files to write:
+
+```
+methods/set_transformer/model.py
+methods/set_transformer/train.py
+methods/set_transformer/config_set_transformer.py
 ```
 
-**Note:** Running **tox** the first time takes a few minutes since tox creates new virtual environments for linting and testing. The following **tox** executions are much faster.
+---
 
-## Credits
+# 2️⃣ **NAIM (Not Another Imputation Method)**
 
-Some code of the [FrEIA framework](https://github.com/VLL-HD/FrEIA) was used for the implementation of Normalizing Flows. Follow [their tutorial](https://github.com/VLL-HD/FrEIA) if you need more documentation about it.
+(Paper: NAIM, arXiv:2407.11540)
 
+### Requirements:
 
-## Citation
+* One token per sensor channel
+* **Masked self-attention**: attention logits for missing sensors = -∞
+* Transformer encoder layers
+* CLS pooling or PMA
+* One-class output
 
-Please cite our paper in your publications if it helps your research.
+Files:
 
-    @article { BroRud2023,
-      author = {Jan Thie{\"s} Brockmann and Marco Rudolph and Bodo Rosenhahn and Bastian Wandt},
-      title = {The voraus-AD Dataset for Anomaly Detection in Robot Applications},
-      journal = {Transactions on Robotics},
-      year = {2023},
-      month = nov
-    }
+```
+methods/naim/model.py
+methods/naim/train.py
+methods/naim/config_naim.py
+```
 
+---
 
-## License Notices
+# 3️⃣ **DEEP SETS**
 
-The **content of this repository** is licensed under the [MIT License](https://opensource.org/license/mit/).   
-The **datasets** are licensed under the [CC BY-NC-SA 4.0 License](https://creativecommons.org/licenses/by-nc-sa/4.0/). 
+(Zaheer et al., NeurIPS 2017)
+
+### Requirements:
+
+* Shared φ (MLP or temporal encoder)
+* Permutation-invariant sum pooling
+* ρ MLP head → anomaly score
+* Minimalistic, lightweight
+
+Files:
+
+```
+methods/deepsets/model.py
+methods/deepsets/train.py
+methods/deepsets/config_deepsets.py
+```
+
+---
+
+# 4️⃣ **FT-TRANSFORMER**
+
+(Gorishniy et al., FT-Transformer)
+
+### Requirements:
+
+* Feature tokenizer:
+
+  * continuous features → linear layer
+  * add feature-ID embedding
+* Transformer encoder
+* CLS pooling
+* One-class head
+
+Files:
+
+```
+methods/ft_transformer/model.py
+methods/ft_transformer/train.py
+methods/ft_transformer/config_ft_transformer.py
+```
+
+---
+
+# 5️⃣ **NEUMISS**
+
+(NeuMiss: Le Morvan et al., NeurIPS 2020)
+
+### Requirements:
+
+* NeuMiss layer with Neumann series missing-aware linear operator
+* Accepts (values, mask)
+* Stack NeuMiss layers + nonlinearity
+* Final embedding → one-class head
+* Must follow paper exactly
+
+Files:
+
+```
+methods/neumiss/model.py
+methods/neumiss/train.py
+methods/neumiss/config_neumiss.py
+```
+
+---
+
+# 6️⃣ **FEATURE DROPOUT BASELINE**
+
+(Training technique)
+
+### Requirements:
+
+* Simple MLP or temporal encoder
+* During training: randomly drop features (structured + unstructured)
+* During inference: feed actual missing mask
+* One-class loss
+
+Files:
+
+```
+methods/dropout_baseline/model.py
+methods/dropout_baseline/train.py
+methods/dropout_baseline/config_dropout.py
+```
+
+---
+
+# 7️⃣ **MLP + IMPUTATION BASELINE**
+
+(Weak baseline; for comparison only)
+
+### Requirements:
+
+* Simple imputation: mean or KNN
+* Convert missing → imputed value
+* Feed 130-dim vector to MLP
+* One-class head
+
+Files:
+
+```
+methods/mlp_impute/model.py
+methods/mlp_impute/imputation.py
+methods/mlp_impute/train.py
+methods/mlp_impute/config_mlp_impute.py
+```
+
+---
+
+# 8️⃣ **TABPFN / TABICL WRAPPER**
+
+(Context learning for tabular)
+
+### Requirements:
+
+* Provide wrapper calling existing TabPFN implementation
+* Subsample features/time
+* Get anomaly probability / score
+
+Files:
+
+```
+methods/tabpfn/run_tabpfn.py
+```
+
+---
+
+# 🧩 **ADDITIONAL CODING RULES**
+
+### All code must:
+
+* Use PyTorch
+* Move tensors to GPU (`cuda`) when available
+* Use tqdm for progress bars
+* Use clean modular functions
+* Have thorough comments referring to the paper sections
+* Not use `torch.compile`
+* Run inference after every epoch
+* Save checkpoints
+* Be deterministic with a `seed_everything()` util
+
+---
+
+# 🚀 **NOW GENERATE THE ENTIRE PROJECT**
+
+Create **all folders, all scripts, all configs, and all implementations**.
+Fill in real PyTorch code for all models, training loops, and evaluation.
+
+Produce the code in a clean and organized way.
+You may output file-by-file.
+
+---
+
+# 🟦 END OF SUPER PROMPT
+
+---
+
+# 如果你愿意，我可以帮你：
+
+### ✔ 把 prompt 再压缩成更短版本
+
+### ✔ 或者增加更多模型（Graph Neural Nets, Masked Autoencoders, Normalizing Flows）
+
+### ✔ 或者写一个 README.md 介绍整个 benchmark
+
+告诉我，你想进一步增强 prompt 吗？
