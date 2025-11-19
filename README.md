@@ -346,16 +346,4 @@ You may output file-by-file.
 
 ---
 
-# 🟦 END OF SUPER PROMPT
 
----
-
-# 如果你愿意，我可以帮你：
-
-### ✔ 把 prompt 再压缩成更短版本
-
-### ✔ 或者增加更多模型（Graph Neural Nets, Masked Autoencoders, Normalizing Flows）
-
-### ✔ 或者写一个 README.md 介绍整个 benchmark
-
-告诉我，你想进一步增强 prompt 吗？
